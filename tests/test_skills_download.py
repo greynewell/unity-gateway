@@ -1213,6 +1213,10 @@ class TestGetUpdatedRefs:
             {"fqn": "main.default.older", "uc_update_time": "2026-06-01T00:00:00Z"},
             {"fqn": "main.default.unversioned"},
             {"fqn": "main.default.gone", "uc_update_time": "2026-01-01T00:00:00Z"},
+            # Mixed RFC-3339 precision: stored whole-second, UC edited to a sub-second later time.
+            {"fqn": "main.default.subsecond", "uc_update_time": "2026-06-26T05:58:25Z"},
+            # Stored sub-second, UC now on an earlier whole second: must NOT be judged newer.
+            {"fqn": "main.default.roundup", "uc_update_time": "2026-06-26T05:58:25.400Z"},
         ]
         current = {
             "main.default.newer": _skill("newer", "2026-02-01T00:00:00Z"),
@@ -1220,12 +1224,18 @@ class TestGetUpdatedRefs:
             "main.default.older": _skill("older", "2026-01-01T00:00:00Z"),
             "main.default.unversioned": _skill("unversioned", "2026-01-01T00:00:00Z"),
             "main.default.gone": None,
+            "main.default.subsecond": _skill("subsecond", "2026-06-26T05:58:25.400Z"),
+            "main.default.roundup": _skill("roundup", "2026-06-26T05:58:25Z"),
         }
         monkeypatch.setattr(sd, "get_skill", lambda ws, tok, fqn: current[fqn])
 
         pairs = sd._get_updated_refs(WS, "token", records)
 
-        assert {r["fqn"] for r, _ in pairs} == {"main.default.newer", "main.default.unversioned"}
+        assert {r["fqn"] for r, _ in pairs} == {
+            "main.default.newer",
+            "main.default.unversioned",
+            "main.default.subsecond",
+        }
 
     def test_empty_records_makes_no_pool(self, monkeypatch):
         monkeypatch.setattr(sd, "get_skill", lambda *a: pytest.fail("should not fetch"))
@@ -1285,13 +1295,16 @@ class TestRefreshOnLaunch:
 
         sd.refresh_downloaded_skills_on_launch({"workspace": WS})
 
-    def test_no_eligible_records_stamps_and_skips_token(self, monkeypatch):
+    def test_no_eligible_records_is_silent_and_skips_token(self, monkeypatch):
         monkeypatch.setattr(sd, "list_downloaded", list)
         monkeypatch.setattr(sd, "get_databricks_token", lambda *a, **k: pytest.fail("no token"))
+        notes: list[str] = []
+        monkeypatch.setattr(sd, "print_note", notes.append)
 
         sd.refresh_downloaded_skills_on_launch({"workspace": WS})
 
         assert skills_state.last_update_check() is not None
+        assert notes == []  # no "Checking..." line for users with no downloaded skills
 
     def test_fail_open_reports_and_continues(self, monkeypatch):
         def boom():
@@ -1329,10 +1342,13 @@ class TestRefreshOnLaunch:
         )
         messages: list[str] = []
         monkeypatch.setattr(sd, "print_success", messages.append)
+        notes: list[str] = []
+        monkeypatch.setattr(sd, "print_note", notes.append)
 
         sd.refresh_downloaded_skills_on_launch({"workspace": WS})
 
         assert (home / ".claude/skills/triage/SKILL.md").read_bytes() == b"fresh"
         assert skills_state.list_downloaded()[0]["uc_update_time"] == "2026-09-01T00:00:00Z"
         assert skills_state.last_update_check() is not None
+        assert any("Checking Unity Catalog" in note for note in notes)
         assert any("Updated 1" in m for m in messages)
