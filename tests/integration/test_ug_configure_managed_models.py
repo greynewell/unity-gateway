@@ -6,6 +6,7 @@ driven against a model list the live workspace does not publish; only the config
 """
 
 import json
+import os
 
 import pytest
 from utils.constants import MANAGED_CLAUDE_PROVIDER_SERVICE
@@ -16,6 +17,7 @@ from utils.managed import (
     build_coding_agent_config,
     set_managed_config_stub,
 )
+from utils.provider_catalog import fetch_anthropic_provider_catalog
 from utils.terminal import AgentTerminal, TerminalProcess
 
 CLAUDE_OPUS = "system.ai.claude-opus-4-8"
@@ -58,7 +60,8 @@ def test_managed_fixture_claude_mps_defaults_accompany_discovery(live_session, w
 
     Expected: the installed ug launch writes the MPS header and every admin-authored default to
     both Claude settings files without changing the model ids, and replaces built-in picker rows
-    with those family defaults. This settings reconciliation check does not claim model inference.
+    with those family defaults plus the independently fetched MPS catalog. This settings
+    reconciliation check does not claim model inference.
     """
     session = live_session
     defaults = {
@@ -82,6 +85,12 @@ def test_managed_fixture_claude_mps_defaults_accompany_discovery(live_session, w
     result = session.run("configure", "--workspace", workspace, "--skip-upgrade", timeout=240)
     assert "Select coding agents to configure:" not in result.stdout, result.stdout
 
+    catalog = fetch_anthropic_provider_catalog(
+        workspace, os.environ["DATABRICKS_BEARER"], MANAGED_CLAUDE_PROVIDER_SERVICE
+    )
+    expected_models = {defaults[key] for key in MANAGED_CLAUDE_DEFAULT_ENV_KEYS} | set(
+        catalog.model_ids
+    )
     command = [str(session.binary), "claude", "--", "--version"]
     with TerminalProcess(session, "claude", command, "managed-defaults-mps") as terminal:
         terminal.finish(timeout=240)
@@ -99,9 +108,12 @@ def test_managed_fixture_claude_mps_defaults_accompany_discovery(live_session, w
             assert env.get(env_key) == defaults[config_key], settings
         picker = settings["modelPicker"]
         assert picker["replaceBuiltInOptions"] is True, picker
-        assert sorted(option["model"] for option in picker["options"]) == sorted(
-            defaults[key] for key in MANAGED_CLAUDE_DEFAULT_ENV_KEYS
-        ), picker
+        assert sorted(option["model"] for option in picker["options"]) == sorted(expected_models), (
+            picker
+        )
+        for option in picker["options"]:
+            if display_name := catalog.display_names.get(option["model"]):
+                assert option["label"] == display_name, option
 
 
 @pytest.mark.managed_fixture
