@@ -229,6 +229,8 @@ agent's static source with its dedicated MPS, and reuse the result. Fifteen exis
 cover focused model, MCP, skills, and lifecycle shapes, including per-agent model reconciliation
 and managed skill cleanup. The two Claude default-model cases launch with injected MPS and Unity
 Catalog sources and verify both generated settings files retain all admin-authored family defaults.
+Their replacement pickers contain exactly those mapped defaults; unit tests also cover partial
+family mappings, explicit model selection, and preservation of static model lists.
 The 14 retained numbered scenarios comprise 24 explicit journeys: 12 managed and 12 unmanaged
 executions; the complete integration suite collects 97 executions. See the named coverage and gaps matrix in
 [../README.md](../README.md).
