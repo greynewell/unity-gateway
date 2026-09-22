@@ -640,6 +640,147 @@ class TestDiscoverModelServices:
         assert calls["n"] == 3  # two failures, third succeeds
 
 
+class TestGetModelService:
+    def test_fetches_exact_service_and_preserves_metadata(self, monkeypatch):
+        payload = {
+            "name": "model-services/main.team.custom-assistant",
+            "supported_api_types": ["openai/v1/chat/completions", "anthropic/v1/messages"],
+            "config": {"routing_config": {"strategy": "ROUND_ROBIN"}},
+            "comment": "Team assistant",
+        }
+        calls = []
+
+        def fake_get(url, token, **kwargs):
+            calls.append((url, token, kwargs))
+            return payload, None
+
+        monkeypatch.setattr(db_mod, "_http_get_json", fake_get)
+
+        service, reason = db_mod.get_model_service(f"{WS}/", "token", "main.team.custom-assistant")
+
+        assert reason is None
+        assert service is payload
+        assert calls == [
+            (
+                f"{WS}/api/2.1/unity-catalog/model-services/main.team.custom-assistant",
+                "token",
+                {"timeout": 30},
+            )
+        ]
+
+    def test_quotes_name_without_changing_spelling(self, monkeypatch):
+        full_name = "Catalog.Schéma.Custom+model?#%"
+        payload = {"name": f"model-services/{full_name}"}
+        urls = []
+
+        def fake_get(url, token, **kwargs):
+            urls.append(url)
+            return payload, None
+
+        monkeypatch.setattr(db_mod, "_http_get_json", fake_get)
+
+        assert db_mod.get_model_service(WS, "token", full_name) == (payload, None)
+        assert urls == [
+            f"{WS}/api/2.1/unity-catalog/model-services/Catalog.Sch%C3%A9ma.Custom%2Bmodel%3F%23%25"
+        ]
+
+    @pytest.mark.parametrize(
+        "full_name",
+        [
+            "",
+            "custom-assistant",
+            "main.team",
+            ".team.model",
+            "main..model",
+            "main.team.",
+            "main.team.model.extra",
+        ],
+    )
+    def test_rejects_malformed_shape_before_request(self, monkeypatch, full_name):
+        def fail(*args, **kwargs):
+            pytest.fail("malformed name shapes must not trigger a model-service request")
+
+        monkeypatch.setattr(db_mod, "_http_get_json", fail)
+
+        service, reason = db_mod.get_model_service(WS, "token", full_name)
+
+        assert service is None
+        assert reason == "Expected a model service name in catalog.schema.model form."
+
+    @pytest.mark.parametrize(
+        ("full_name", "encoded_name"),
+        [
+            ("model-services/main.team.model", "model-services%2Fmain.team.model"),
+            (" main.team.model", "%20main.team.model"),
+            ("main.team.model ", "main.team.model%20"),
+            ("main.`team`.model", "main.%60team%60.model"),
+            ("main.team.model/other", "main.team.model%2Fother"),
+            ("main.te\nam.model", "main.te%0Aam.model"),
+            (f"main.team.{'m' * 256}", f"main.team.{'m' * 256}"),
+        ],
+    )
+    def test_delegates_character_and_length_validation_to_api(
+        self, monkeypatch, full_name, encoded_name
+    ):
+        error = "HTTP 400 Bad Request: INVALID_PARAMETER_VALUE"
+        urls = []
+
+        def fake_get(url, token, **kwargs):
+            urls.append(url)
+            return None, error
+
+        monkeypatch.setattr(db_mod, "_http_get_json", fake_get)
+
+        assert db_mod.get_model_service(WS, "token", full_name) == (None, error)
+        assert urls == [f"{WS}/api/2.1/unity-catalog/model-services/{encoded_name}"]
+
+    @pytest.mark.parametrize("payload", [None, [], {}, {"name": 42}])
+    def test_rejects_malformed_payload(self, monkeypatch, payload):
+        monkeypatch.setattr(db_mod, "_http_get_json", lambda *a, **kw: (payload, None))
+
+        service, reason = db_mod.get_model_service(WS, "token", "main.team.model")
+
+        assert service is None
+        assert "unexpected shape" in reason
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "model-services/main.team.other",
+            "model-provider-services/main.team.model",
+            "main.team.model",
+        ],
+    )
+    def test_rejects_response_for_another_resource(self, monkeypatch, name):
+        monkeypatch.setattr(db_mod, "_http_get_json", lambda *a, **kw: ({"name": name}, None))
+
+        service, reason = db_mod.get_model_service(WS, "token", "main.team.model")
+
+        assert service is None
+        assert "did not match" in reason
+        assert "main.team.model" in reason
+
+    @pytest.mark.parametrize(
+        ("error", "guidance"),
+        [
+            ("HTTP 404 Not Found: NOT_FOUND", "not found or is not accessible"),
+            ("HTTP 403 Forbidden: NOT_FOUND", "Permission denied"),
+            ("HTTP 401 Unauthorized", "HTTP 401 Unauthorized"),
+            ("HTTP 500 Server Error", "HTTP 500 Server Error"),
+            ("network error: timed out", "Check workspace connectivity and retry"),
+            ("response was not valid JSON", "response was not valid JSON"),
+        ],
+    )
+    def test_reports_lookup_errors_without_losing_diagnostics(self, monkeypatch, error, guidance):
+        monkeypatch.setattr(db_mod, "_http_get_json", lambda *a, **kw: (None, error))
+
+        service, reason = db_mod.get_model_service(WS, "token", "main.team.model")
+
+        assert service is None
+        assert error in reason
+        assert guidance in reason
+
+
 class TestModelServiceExists:
     def test_true_when_listed_in_its_schema(self, monkeypatch):
         urls: list[str] = []
