@@ -384,9 +384,9 @@ module fetches the workspace's published config once, replaces Claude's static m
 `main.default.ci_e2e_anthropic_mps`, drops incompatible static defaults, and reuses that fixture
 across all configured/fresh scenarios. The Codex module does the same with
 `main.default.ci_e2e_openai_mps`. Separate read-only, provider-scoped model-list requests
-establish expected IDs independently of the generated agent files. The tests require Claude's
-native cache to match those IDs and a cached model to appear in a numbered picker row
-(including native Haiku 4.5, Opus 5, and Sonnet 5 deduplication), alongside its admin header. Codex's generated catalog
+establish expected IDs independently of the generated agent files. With no authored defaults,
+Claude's native cache and replacement picker must match those IDs, preserve catalog display names,
+and show a model in a numbered picker row alongside its admin header. Codex's generated catalog
 and app-server list must match its independently fetched IDs. These requests send no inference
 prompts. Both agents must reject personal source overrides.
 Codex state comparisons exclude `.codex/tmp/arg0`, the disposable executable links
