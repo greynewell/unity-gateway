@@ -230,7 +230,8 @@ cover focused model, MCP, skills, and lifecycle shapes, including per-agent mode
 and managed skill cleanup. The two Claude default-model cases launch with injected MPS and Unity
 Catalog sources and verify both generated settings files retain all admin-authored family defaults.
 Their replacement pickers contain those mapped defaults plus the independently fetched catalog
-for MPS, with duplicate model IDs removed and catalog labels retained. Unit tests also cover partial
+for MPS. Labeled default rows appear first, followed by every catalog model, including models
+also used as defaults; catalog labels are retained. Unit tests also cover partial
 family mappings, catalog descriptions, explicit model selection, and preservation of static model lists.
 The 14 retained numbered scenarios comprise 24 explicit journeys: 12 managed and 12 unmanaged
 executions; the complete integration suite collects 97 executions. See the named coverage and gaps matrix in
