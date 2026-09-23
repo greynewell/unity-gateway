@@ -42,6 +42,7 @@ from ucode.agents import codex as codex_agent
 from ucode.agents import (
     launch as launch_agent,
 )
+from ucode.agents import opencode as opencode_agent
 from ucode.agents.args import has_explicit_model_arg
 from ucode.agents.codex import revert_legacy_shared_config
 from ucode.agents.pi import PI_SETTINGS_BACKUP_PATH, PI_SETTINGS_PATH
@@ -2201,7 +2202,9 @@ def claude_router_hook_cmd(
         sys.stdout.write(json.dumps(output))
 
 
-def _auto_configure_tool(tool: str, custom_oauth: CustomOAuthConfig | None = None) -> None:
+def _auto_configure_tool(
+    tool: str, custom_oauth: CustomOAuthConfig | None = None, *, model: str | None = None
+) -> None:
     """Configure a tool for launch without sending a separate validation prompt.
 
     The real agent session follows immediately; explicit configure retains the
@@ -2215,7 +2218,8 @@ def _auto_configure_tool(tool: str, custom_oauth: CustomOAuthConfig | None = Non
     configure_kwargs = {"custom_oauth": custom_oauth} if custom_oauth is not None else {}
     state = configure_shared_state(workspace, profile=profile, tools=[tool], **configure_kwargs)
 
-    state = configure_single_tool(tool, state)
+    model_kwargs = {"model": model} if model is not None else {}
+    state = configure_single_tool(tool, state, **model_kwargs)
 
     spec = TOOL_SPECS[tool]
     console.print(
@@ -2523,6 +2527,8 @@ def _launch_tool(
 ) -> None:
     try:
         tool = normalize_tool(tool_name)
+        if tool == "opencode":
+            model, ctx.args = opencode_agent.extract_model_args(model, ctx.args)
         if not custom_oauth_cli_enabled(custom_oauth):
             os.environ.pop(CUSTOM_OAUTH_CLI_ENV_VAR, None)
         # Before any status print: a stdio-protocol subcommand owns stdout, so
@@ -2559,7 +2565,9 @@ def _launch_tool(
             skip_cli_version_check=skip_preflight,
         )
         if needs_auto_configure:
-            if custom_oauth is None:
+            if tool == "opencode" and model is not None:
+                _auto_configure_tool(tool, custom_oauth=custom_oauth, model=model)
+            elif custom_oauth is None:
                 _auto_configure_tool(tool)
             else:
                 _auto_configure_tool(tool, custom_oauth=custom_oauth)
@@ -2762,7 +2770,8 @@ def _launch_tool(
             managed_model = (
                 managed_launch_model(managed, recommendation, tool) if managed is not None else None
             )
-            state, resolved_model = resolve_launch_model(tool, state, managed_model)
+            launch_model = model if tool == "opencode" and model is not None else managed_model
+            state, resolved_model = resolve_launch_model(tool, state, launch_model)
             # The admin's model outranks a smart-routing pick too. Claude only launches on it when
             # pinned as ANTHROPIC_MODEL (route_root_model); other agents take `resolved_model`,
             # which already holds it from resolve_launch_model above.
@@ -3210,9 +3219,20 @@ def gemini_cmd(
 )
 def opencode_cmd(
     ctx: typer.Context,
+    model: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--model",
+            "-m",
+            help="Model for this launch: a Unity Catalog model name or OpenCode provider/model. "
+            "Models outside discovery are checked for Chat Completions support.",
+        ),
+    ] = None,
     skip_preflight: SkipPreflightOption = False,
 ) -> None:
     """Launch OpenCode via Databricks."""
+    # Preserve repeated owned options for the same conflict checks as forwarded native flags.
+    ctx.args = [arg for value in model or [] for arg in ("--model", value)] + ctx.args
     _launch_tool("opencode", ctx, skip_preflight=skip_preflight)
 
 

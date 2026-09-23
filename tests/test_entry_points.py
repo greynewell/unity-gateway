@@ -16,7 +16,7 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 
 @pytest.mark.parametrize("command", ["ug", "ucode"])
-@pytest.mark.parametrize("flag", ["--help", "--version"])
+@pytest.mark.parametrize("flag", ["--help", "--version", "opencode --help"])
 def test_installed_console_script_runs_with_its_invoked_name(command: str, flag: str) -> None:
     """Both scripts installed by ``uv run pytest`` execute the same CLI successfully."""
     bin_dir = Path(sys.executable).parent
@@ -24,7 +24,7 @@ def test_installed_console_script_runs_with_its_invoked_name(command: str, flag:
     assert script is not None, f"{command} was not installed in {bin_dir}"
 
     result = subprocess.run(
-        [script, flag],
+        [script, *flag.split()],
         cwd=Path(__file__).parent.parent,
         env={**os.environ, "NO_COLOR": "1"},
         text=True,
@@ -36,5 +36,8 @@ def test_installed_console_script_runs_with_its_invoked_name(command: str, flag:
     assert result.returncode == 0, output
     if flag == "--version":
         assert _ANSI_RE.sub("", result.stdout).strip() == version("unity-gateway")
+    elif flag == "opencode --help":
+        assert "--model" in _ANSI_RE.sub("", output)
+        assert "provider/model" in _ANSI_RE.sub("", output)
     else:
         assert f"Usage: {command} " in _ANSI_RE.sub("", output)

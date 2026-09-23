@@ -2539,6 +2539,88 @@ class TestRevert:
         assert "Claude Code MCP config: restored" in result.output
 
 
+class TestOpenCodeModelSelection:
+    MODEL = "system.ai.grok-4-6"
+
+    def test_help_exposes_model_selection(self):
+        result = runner.invoke(app, ["opencode", "--help"])
+        assert result.exit_code == 0
+        output = _strip_ansi(result.output)
+        assert "--model" in output
+        assert "provider/model" in output
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--model", MODEL, "run", "hello"],
+            [f"--model={MODEL}", "run", "hello"],
+            ["-m", MODEL, "run", "hello"],
+            ["--", "run", "--model", MODEL, "hello"],
+            ["--model", MODEL, "-m", MODEL, "run", "hello"],
+        ],
+    )
+    def test_explicit_model_launches_without_discovered_default(self, args):
+        state = {**MINIMAL_STATE, "opencode_models": {}}
+        with (
+            patch("ucode.cli.ensure_bootstrap_dependencies"),
+            patch("ucode.cli.load_state", return_value=state),
+            patch("ucode.cli.ensure_provider_state", return_value=state),
+            patch("ucode.cli.configure_shared_state", return_value=state),
+            patch("ucode.cli._fetch_managed_config", return_value=(None, False)),
+            patch("ucode.cli._fetch_budget_recommendation", return_value=None),
+            patch("ucode.cli.configure_tool", return_value=state) as configure,
+            patch("ucode.cli.launch_agent") as launch,
+        ):
+            result = runner.invoke(app, ["opencode", *args])
+
+        assert result.exit_code == 0, result.output
+        assert configure.call_args.args == ("opencode", state, self.MODEL)
+        assert launch.call_args.args == ("opencode", state, ["run", "hello"])
+        assert launch.call_args.kwargs["options"].user_pinned_model == self.MODEL
+        assert state["opencode_models"] == {}
+
+    def test_first_launch_validates_explicit_model_during_configuration(self):
+        state = {**MINIMAL_STATE, "opencode_models": {}, "available_tools": []}
+        with (
+            patch("ucode.cli.ensure_bootstrap_dependencies"),
+            patch("ucode.cli.load_state", return_value=state),
+            patch("ucode.cli.configure_shared_state", return_value=state),
+            patch("ucode.cli.configure_single_tool", return_value=state) as configure_single,
+            patch("ucode.cli.ensure_provider_state", return_value=state),
+            patch("ucode.cli._fetch_managed_config", return_value=(None, False)),
+            patch("ucode.cli._fetch_budget_recommendation", return_value=None),
+            patch("ucode.cli.configure_tool", return_value=state),
+            patch("ucode.cli.launch_agent") as launch,
+        ):
+            result = runner.invoke(app, ["opencode", "--model", self.MODEL])
+
+        assert result.exit_code == 0, result.output
+        configure_single.assert_called_once_with("opencode", state, model=self.MODEL)
+        launch.assert_called_once()
+
+    def test_failed_model_validation_prevents_launch(self):
+        with (
+            _launch_policy_patches(None) as mocks,
+            patch("ucode.cli.configure_tool", side_effect=RuntimeError("Model is not accessible")),
+        ):
+            result = runner.invoke(app, ["opencode", "--model", self.MODEL])
+
+        assert result.exit_code == 1
+        assert "Model is not accessible" in _strip_ansi(result.output)
+        mocks["launch"].assert_not_called()
+
+    @pytest.mark.parametrize("middle", [[], ["--"]])
+    def test_conflicting_owned_or_forwarded_model_fails_before_setup(self, middle):
+        with patch("ucode.cli.ensure_bootstrap_dependencies") as bootstrap:
+            result = runner.invoke(
+                app,
+                ["opencode", "--model", self.MODEL, *middle, "-m", "system.ai.qwen35-122b-a10b"],
+            )
+        assert result.exit_code == 1
+        assert "conflict" in result.output.lower()
+        bootstrap.assert_not_called()
+
+
 class TestDoctorCommand:
     def test_invokes_doctor(self):
         with patch("ucode.doctor.doctor", return_value=0) as mock_doctor:

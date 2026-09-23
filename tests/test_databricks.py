@@ -464,6 +464,15 @@ class TestModelTokenLimits:
     def test_uncapped_model_returns_none(self):
         assert db_mod.model_token_limits("system.ai.kimi-k2-7-code") is None
 
+    def test_qwen35_uses_serving_runtime_limits(self):
+        assert db_mod.model_token_limits("system.ai.qwen35-122b-a10b") == {
+            "context": 262_144,
+            "output": 25_000,
+        }
+
+    def test_other_qwen_models_remain_uncapped(self):
+        assert db_mod.model_token_limits("system.ai.qwen3-next-80b-a3b-instruct") is None
+
 
 class TestDiscoverModelServices:
     def test_buckets_families_by_name(self, monkeypatch):
