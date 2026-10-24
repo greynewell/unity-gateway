@@ -1,7 +1,7 @@
 # Build using the documented minimal archive. Only the runner and tests enter the image;
 # pass a release version or mount a prebuilt wheel at runtime.
 FROM ghcr.io/astral-sh/uv:0.9.8 AS uv
-FROM node:22.19.0-bookworm-slim AS node
+FROM node:22.23.4-bookworm-slim AS node
 FROM python:3.12.10-slim-bookworm
 
 ARG DATABRICKS_VERSION=1.17.0
